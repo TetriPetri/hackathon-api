@@ -1,9 +1,7 @@
-# api/room_api.py - Fixed for Vercel serverless deployment
-from flask import Flask, jsonify, request, abort
-from flask_cors import CORS
-
-app = Flask(__name__)
-CORS(app)  # Enable CORS for LLM access
+# api/index.py - Room Navigation API for Vercel
+from http.server import BaseHTTPRequestHandler
+import json
+from urllib.parse import urlparse, parse_qs
 
 # Room Class
 class Room:
@@ -14,7 +12,6 @@ class Room:
 
     def add_connection(self, room):
         self.connected_rooms.append(room)
-
 
 # RoomGraph Class
 class RoomGraph:
@@ -43,15 +40,9 @@ class RoomGraph:
         room1.add_connection(room2)
         room2.add_connection(room1)
 
-    def get_connections(self, room_id):
-        room = self.rooms.get(room_id)
-        if not room:
-            raise ValueError(f"Room with ID {room_id} not found.")
-        return [r.name for r in room.connected_rooms]
-
     def find_shortest_path(self, start_id, end_id):
         if start_id not in self.rooms or end_id not in self.rooms:
-            raise ValueError("Both rooms must exist.")
+            return None
 
         queue = [(start_id, [start_id])]
         visited = set()
@@ -114,127 +105,138 @@ room_graph.connect_rooms("15", "6")
 room_graph.connect_rooms("15", "4")
 room_graph.connect_rooms("3", "1")
 
-@app.route('/api/room_api', methods=['GET', 'POST'])
-@app.route('/api/room_api/', methods=['GET', 'POST'])
-@app.route('/api/room_api/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
-def catch_all(path=''):
-    """Route all requests through this handler"""
-    
-    # Home/documentation
-    if path == '' or path == '/':
-        return jsonify({
-            "name": "Room Navigation API",
-            "status": "online",
-            "endpoints": {
-                "/api/room_api/rooms": "List all rooms",
-                "/api/room_api/rooms/{id}": "Get room by ID",
-                "/api/room_api/rooms/byname/{name}": "Get room by name",
-                "/api/room_api/rooms/{id}/connections": "Get connections",
-                "/api/room_api/route/byids?from=X&to=Y": "Route by IDs",
-                "/api/room_api/route/bynames?from=X&to=Y": "Route by names"
-            },
-            "example": "/api/room_api/route/bynames?from=köket&to=cafét"
-        }), 200
-    
-    # List all rooms
-    elif path == 'rooms':
-        rooms_list = []
-        for room_id, room in room_graph.rooms.items():
-            rooms_list.append({
-                "room_id": room.room_id,
-                "name": room.name,
-                "connections": [r.name for r in room.connected_rooms]
-            })
-        return jsonify({"rooms": rooms_list}), 200
-    
-    # Route by names
-    elif path == 'route/bynames':
-        start_name = request.args.get('from', '').lower()
-        end_name = request.args.get('to', '').lower()
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+        query = parse_qs(parsed_path.query)
         
-        if not start_name or not end_name:
-            return jsonify({"error": "Parameters 'from' and 'to' required"}), 400
+        # Remove leading slash
+        if path.startswith('/'):
+            path = path[1:]
         
-        start_room = room_graph.get_room_by_name(start_name)
-        end_room = room_graph.get_room_by_name(end_name)
+        # Route handling
+        response_data = None
+        status_code = 200
         
-        if not start_room:
-            return jsonify({"error": f"Room '{start_name}' not found"}), 404
-        if not end_room:
-            return jsonify({"error": f"Room '{end_name}' not found"}), 404
+        # Home endpoint
+        if path == '' or path == '/':
+            response_data = {
+                "name": "Room Navigation API",
+                "status": "online",
+                "endpoints": {
+                    "/": "API documentation",
+                    "/rooms": "List all rooms",
+                    "/rooms/{id}": "Get room by ID",
+                    "/route": "Find route (?from=X&to=Y using names)",
+                    "/route-ids": "Find route (?from=X&to=Y using IDs)"
+                },
+                "example": "/route?from=köket&to=cafét"
+            }
         
-        path_ids = room_graph.find_shortest_path(start_room.room_id, end_room.room_id)
-        if path_ids:
-            named_path = [room_graph.rooms[rid].name for rid in path_ids]
-            return jsonify({
-                "from": start_room.name,
-                "to": end_room.name,
-                "path": named_path,
-                "hops": len(named_path) - 1
-            }), 200
+        # List all rooms
+        elif path == 'rooms':
+            rooms_list = []
+            for room_id, room in room_graph.rooms.items():
+                rooms_list.append({
+                    "room_id": room.room_id,
+                    "name": room.name,
+                    "connections": [r.name for r in room.connected_rooms]
+                })
+            response_data = {"rooms": rooms_list}
+        
+        # Get specific room
+        elif path.startswith('rooms/'):
+            room_id = path.replace('rooms/', '')
+            room = room_graph.get_room(room_id)
+            if room:
+                response_data = {
+                    "room_id": room.room_id,
+                    "name": room.name,
+                    "connections": [r.name for r in room.connected_rooms]
+                }
+            else:
+                status_code = 404
+                response_data = {"error": f"Room {room_id} not found"}
+        
+        # Find route by names
+        elif path == 'route':
+            from_param = query.get('from', [''])[0].lower()
+            to_param = query.get('to', [''])[0].lower()
+            
+            if not from_param or not to_param:
+                status_code = 400
+                response_data = {"error": "Parameters 'from' and 'to' are required"}
+            else:
+                start_room = room_graph.get_room_by_name(from_param)
+                end_room = room_graph.get_room_by_name(to_param)
+                
+                if not start_room:
+                    status_code = 404
+                    response_data = {"error": f"Room '{from_param}' not found"}
+                elif not end_room:
+                    status_code = 404
+                    response_data = {"error": f"Room '{to_param}' not found"}
+                else:
+                    path_ids = room_graph.find_shortest_path(start_room.room_id, end_room.room_id)
+                    if path_ids:
+                        named_path = [room_graph.rooms[rid].name for rid in path_ids]
+                        response_data = {
+                            "from": start_room.name,
+                            "to": end_room.name,
+                            "path": named_path,
+                            "hops": len(named_path) - 1
+                        }
+                    else:
+                        status_code = 404
+                        response_data = {"error": "No path found"}
+        
+        # Find route by IDs
+        elif path == 'route-ids':
+            from_param = query.get('from', [''])[0]
+            to_param = query.get('to', [''])[0]
+            
+            if not from_param or not to_param:
+                status_code = 400
+                response_data = {"error": "Parameters 'from' and 'to' are required"}
+            elif from_param not in room_graph.rooms or to_param not in room_graph.rooms:
+                status_code = 404
+                response_data = {"error": "Invalid room ID"}
+            else:
+                path_ids = room_graph.find_shortest_path(from_param, to_param)
+                if path_ids:
+                    named_path = [room_graph.rooms[rid].name for rid in path_ids]
+                    response_data = {
+                        "from": room_graph.rooms[from_param].name,
+                        "to": room_graph.rooms[to_param].name,
+                        "path": named_path,
+                        "hops": len(named_path) - 1
+                    }
+                else:
+                    status_code = 404
+                    response_data = {"error": "No path found"}
+        
         else:
-            return jsonify({"error": "No path found"}), 404
-    
-    # Route by IDs
-    elif path == 'route/byids':
-        start_id = request.args.get('from')
-        end_id = request.args.get('to')
+            status_code = 404
+            response_data = {"error": f"Unknown endpoint: {path}"}
         
-        if not start_id or not end_id:
-            return jsonify({"error": "Parameters 'from' and 'to' required"}), 400
-        
-        if start_id not in room_graph.rooms or end_id not in room_graph.rooms:
-            return jsonify({"error": "Invalid room ID"}), 404
-        
-        path_ids = room_graph.find_shortest_path(start_id, end_id)
-        if path_ids:
-            named_path = [room_graph.rooms[rid].name for rid in path_ids]
-            return jsonify({
-                "from": room_graph.rooms[start_id].name,
-                "to": room_graph.rooms[end_id].name,
-                "path": named_path,
-                "hops": len(named_path) - 1
-            }), 200
-        else:
-            return jsonify({"error": "No path found"}), 404
+        # Send response
+        self.send_response(status_code)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(response_data, ensure_ascii=False).encode('utf-8'))
+        return
     
-    # Get room by ID with connections
-    elif path.startswith('rooms/') and path.endswith('/connections'):
-        room_id = path.replace('rooms/', '').replace('/connections', '')
-        room = room_graph.get_room(room_id)
-        if room:
-            return jsonify({
-                "room_id": room.room_id,
-                "connections": [r.name for r in room.connected_rooms]
-            }), 200
-        else:
-            return jsonify({"error": f"Room {room_id} not found"}), 404
+    def do_POST(self):
+        # Handle POST requests if needed
+        self.do_GET()
     
-    # Get room by name
-    elif path.startswith('rooms/byname/'):
-        room_name = path.replace('rooms/byname/', '')
-        room = room_graph.get_room_by_name(room_name)
-        if room:
-            return jsonify({
-                "room_id": room.room_id,
-                "name": room.name,
-                "connections": [r.name for r in room.connected_rooms]
-            }), 200
-        else:
-            return jsonify({"error": f"Room '{room_name}' not found"}), 404
-    
-    # Get room by ID
-    elif path.startswith('rooms/'):
-        room_id = path.replace('rooms/', '')
-        room = room_graph.get_room(room_id)
-        if room:
-            return jsonify({
-                "room_id": room.room_id,
-                "name": room.name,
-                "connections": [r.name for r in room.connected_rooms]
-            }), 200
-        else:
-            return jsonify({"error": f"Room {room_id} not found"}), 404
-    
-    else:
-        return jsonify({"error": f"Unknown endpoint: {path}"}), 404
+    def do_OPTIONS(self):
+        # Handle CORS preflight
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+        return
