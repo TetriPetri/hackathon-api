@@ -1,6 +1,9 @@
+# api/room_api.py - Fixed for Vercel serverless deployment
 from flask import Flask, jsonify, request, abort
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for LLM access
 
 # Room Class
 class Room:
@@ -27,13 +30,13 @@ class RoomGraph:
             raise ValueError(f"Room with ID {room_id} already exists.")
         room = Room(room_id, name)
         self.rooms[room_id] = room
-        self.rooms_by_name[name] = room
+        self.rooms_by_name[name.lower()] = room  # Store lowercase for case-insensitive lookup
 
     def get_room(self, room_id):
         return self.rooms.get(room_id)
 
     def get_room_by_name(self, room_name):
-        return self.rooms_by_name.get(room_name)
+        return self.rooms_by_name.get(room_name.lower())
 
     def connect_rooms(self, room_id1, room_id2):
         room1 = self.rooms.get(room_id1)
@@ -53,13 +56,13 @@ class RoomGraph:
         if start_id not in self.rooms or end_id not in self.rooms:
             raise ValueError("Both rooms must exist.")
 
-        queue = [(start_id, [start_id])]  # (current_room_id, path_so_far)
+        queue = [(start_id, [start_id])]
         visited = set()
 
         while queue:
             current_room_id, path = queue.pop(0)
             if current_room_id == end_id:
-                return path  # Found the path
+                return path
 
             if current_room_id in visited:
                 continue
@@ -70,9 +73,9 @@ class RoomGraph:
                 if neighbor.room_id not in visited:
                     queue.append((neighbor.room_id, path + [neighbor.room_id]))
 
-        return None  # No path found
+        return None
 
-# Instantiate the RoomGraph
+# Initialize room graph globally (will be created once per cold start)
 room_graph = RoomGraph()
 room_graph.add_room("0", 'köket')
 room_graph.add_room("1", 'mount everest')
@@ -95,68 +98,58 @@ room_graph.add_room("17", 'glittertind')
 room_graph.add_room("18", 'helag')
 room_graph.add_room("19", 'berit')
 
-room_graph.connect_rooms("0", "16")     #köket mot lilla
-room_graph.connect_rooms("0", "14")     #köket mot stora
-room_graph.connect_rooms("16", "14")    #lilla mot stora
-room_graph.connect_rooms("16", "11")    #lilla mot akkah
-room_graph.connect_rooms("16", "15")    #lilla mot korridoren
-room_graph.connect_rooms("16", "17")    #lilla mot glittertind
-room_graph.connect_rooms("16", "8")     #lilla mot matterhorn
-room_graph.connect_rooms("14", "15")    #stora mot korridoren
-room_graph.connect_rooms("14", "3")     #stora mot cafet
-room_graph.connect_rooms("14", "12")    #stora mot elbrus
-room_graph.connect_rooms("14", "2")     #stora mot denali
-room_graph.connect_rooms("14", "18")    #stora mot helag
-room_graph.connect_rooms("14", "19")    #stora mot berit
+# Add all connections
+room_graph.connect_rooms("0", "16")
+room_graph.connect_rooms("0", "14")
+room_graph.connect_rooms("16", "14")
+room_graph.connect_rooms("16", "11")
+room_graph.connect_rooms("16", "15")
+room_graph.connect_rooms("16", "17")
+room_graph.connect_rooms("16", "8")
+room_graph.connect_rooms("14", "15")
+room_graph.connect_rooms("14", "3")
+room_graph.connect_rooms("14", "12")
+room_graph.connect_rooms("14", "2")
+room_graph.connect_rooms("14", "18")
+room_graph.connect_rooms("14", "19")
+room_graph.connect_rooms("15", "3")
+room_graph.connect_rooms("15", "6")
+room_graph.connect_rooms("15", "4")
+room_graph.connect_rooms("3", "1")
 
-room_graph.connect_rooms("15", "3")     # korridoren mot cafeet
-room_graph.connect_rooms("15", "6")     # korridoren mot k2
-room_graph.connect_rooms("15", "4")     # korridoren mot fuji
+# Root route - API documentation
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({
+        "name": "Room Navigation API",
+        "description": "API for finding shortest paths between rooms",
+        "endpoints": {
+            "/": "API documentation",
+            "/rooms": "List all rooms",
+            "/rooms/<room_id>": "Get room by ID",
+            "/rooms/byname/<room_name>": "Get room by name",
+            "/rooms/<room_id>/connections": "Get room connections",
+            "/rooms/route/byids?from=X&to=Y": "Find route by room IDs",
+            "/rooms/route/bynames?from=X&to=Y": "Find route by room names"
+        },
+        "example_usage": {
+            "find_route": "/rooms/route/bynames?from=köket&to=mount%20everest"
+        }
+    }), 200
 
-room_graph.connect_rooms("3", "1")      # cafet mot mount everest
+# List all rooms
+@app.route('/rooms', methods=['GET'])
+def list_rooms():
+    rooms_list = []
+    for room_id, room in room_graph.rooms.items():
+        rooms_list.append({
+            "room_id": room.room_id,
+            "name": room.name,
+            "connections": [r.name for r in room.connected_rooms]
+        })
+    return jsonify({"rooms": rooms_list}), 200
 
-# Route to create a new room
-@app.route('/rooms', methods=['POST'])
-def create_room():
-    data = request.get_json()
-    room_id = data.get('room_id')
-    name = data.get('name')
-
-    if not room_id or not name:
-        abort(400, description="Room ID and name are required.")
-    
-    try:
-        room_graph.add_room(room_id, name)
-        return jsonify({"message": f"Room '{name}' created successfully."}), 201
-    except ValueError as e:
-        abort(400, description=str(e))
-
-# Route to connect two rooms
-@app.route('/rooms/connect', methods=['POST'])
-def connect_rooms():
-    data = request.get_json()
-    room_id1 = data.get('room_id1')
-    room_id2 = data.get('room_id2')
-
-    if not room_id1 or not room_id2:
-        abort(400, description="Both room IDs are required.")
-    
-    try:
-        room_graph.connect_rooms(room_id1, room_id2)
-        return jsonify({"message": f"Rooms {room_id1} and {room_id2} connected successfully."}), 200
-    except ValueError as e:
-        abort(400, description=str(e))
-
-# Route to get a room's connections
-@app.route('/rooms/<room_id>/connections', methods=['GET'])
-def get_connections(room_id):
-    try:
-        connections = room_graph.get_connections(room_id)
-        return jsonify({"room_id": room_id, "connections": connections}), 200
-    except ValueError as e:
-        abort(404, description=str(e))
-
-# Route to get a room by ID
+# Get room by ID
 @app.route('/rooms/<room_id>', methods=['GET'])
 def get_room(room_id):
     room = room_graph.get_room(room_id)
@@ -168,19 +161,28 @@ def get_room(room_id):
         "connections": [r.name for r in room.connected_rooms]
     }), 200
 
-# Route to get a room by name
-@app.route('/rooms/<room_name>', methods=['GET'])
+# Get room by name
+@app.route('/rooms/byname/<path:room_name>', methods=['GET'])
 def get_room_by_name(room_name):
     room = room_graph.get_room_by_name(room_name)
     if not room:
-        abort(404, description=f"Room with name {room_name} not found.")
+        abort(404, description=f"Room with name '{room_name}' not found.")
     return jsonify({
         "room_id": room.room_id,
         "name": room.name,
         "connections": [r.name for r in room.connected_rooms]
     }), 200
 
-# Route for getting a route between room A and room B given ids
+# Get room connections
+@app.route('/rooms/<room_id>/connections', methods=['GET'])
+def get_connections(room_id):
+    try:
+        connections = room_graph.get_connections(room_id)
+        return jsonify({"room_id": room_id, "connections": connections}), 200
+    except ValueError as e:
+        abort(404, description=str(e))
+
+# Find route by IDs
 @app.route('/rooms/route/byids', methods=['GET'])
 def get_shortest_route_by_ids():
     start_id = request.args.get('from')
@@ -206,11 +208,11 @@ def get_shortest_route_by_ids():
     except ValueError as e:
         abort(400, description=str(e))
 
-# Route for getting a route between room A and room B given names
+# Find route by names
 @app.route('/rooms/route/bynames', methods=['GET'])
 def get_shortest_route_by_names():
-    start_name = request.args.get('from').lower()
-    end_name = request.args.get('to').lower()
+    start_name = request.args.get('from')
+    end_name = request.args.get('to')
 
     if not start_name or not end_name:
         abort(400, description="Query parameters 'from' and 'to' are required.")
@@ -218,8 +220,10 @@ def get_shortest_route_by_names():
     start_room = room_graph.get_room_by_name(start_name)
     end_room = room_graph.get_room_by_name(end_name)
 
-    if not start_room or not end_room:
-        abort(400, description="Could not find one or both rooms given parameters 'from' and 'to'")
+    if not start_room:
+        abort(404, description=f"Room '{start_name}' not found")
+    if not end_room:
+        abort(404, description=f"Room '{end_name}' not found")
 
     start_id = start_room.room_id
     end_id = end_room.room_id
@@ -236,33 +240,35 @@ def get_shortest_route_by_names():
             }), 200
         else:
             return jsonify({
-                "message": f"No route found between '{start_id}' and '{end_id}'."
+                "message": f"No route found between '{start_name}' and '{end_name}'."
             }), 404
     except ValueError as e:
         abort(400, description=str(e))
 
-# Error handler
+# Error handlers
 @app.errorhandler(400)
 @app.errorhandler(404)
 def handle_error(error):
-    response = jsonify({"message": error.description})
+    response = jsonify({"error": error.description})
     response.status_code = error.code
     return response
 
-# Run the application
-if __name__ == '__main__':
-    app.run(debug=True)
-
-
-# Vercel serverless function handler
-def handler(request):
-    with app.test_request_context(request.path, method=request.method, 
-                                  data=request.data, headers=request.headers):
+# CRITICAL: This is the Vercel serverless handler
+# Vercel expects this exact format
+def handler(request, context):
+    with app.test_request_context(
+        path=request.path,
+        method=request.method,
+        headers=request.headers,
+        data=request.get_data(),
+        query_string=request.query_string
+    ):
         try:
             response = app.full_dispatch_request()
             return response
         except Exception as e:
-            return app.make_response(str(e))
+            return jsonify({"error": str(e)}), 500
 
-# Also need this for Vercel
-app.wsgi_app = handler
+# For local testing
+if __name__ == '__main__':
+    app.run(debug=True)
