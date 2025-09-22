@@ -111,16 +111,23 @@ class handler(BaseHTTPRequestHandler):
         path = parsed_path.path
         query = parse_qs(parsed_path.query)
         
-        # Remove leading slash
-        if path.startswith('/'):
-            path = path[1:]
+        # Remove leading slash and /api prefix if present
+        if path.startswith('/api/'):
+            path = path[5:]  # Remove '/api/'
+        elif path.startswith('/api'):
+            path = path[4:]  # Remove '/api'
+        elif path.startswith('/'):
+            path = path[1:]  # Remove just '/'
         
         # Route handling
         response_data = None
         status_code = 200
         
+        # Debug: log the path being processed
+        print(f"Processing path: '{path}', query: {query}")
+        
         # Home endpoint
-        if path == '' or path == '/':
+        if path == '' or path == '/' or path == 'api':
             response_data = {
                 "name": "Room Navigation API",
                 "status": "online",
