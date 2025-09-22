@@ -180,14 +180,49 @@ def get_room_by_name(room_name):
         "connections": [r.name for r in room.connected_rooms]
     }), 200
 
-# Route for getting a route between room A and room B
-@app.route('/rooms/route/names', methods=['GET'])
-def get_shortest_route_by_names():
+# Route for getting a route between room A and room B given ids
+@app.route('/rooms/route/byids', methods=['GET'])
+def get_shortest_route_by_ids():
     start_id = request.args.get('from')
     end_id = request.args.get('to')
 
     if not start_id or not end_id:
         abort(400, description="Query parameters 'from' and 'to' are required.")
+
+    try:
+        path = room_graph.find_shortest_path(start_id, end_id)
+        if path:
+            named_path = [room_graph.rooms[rid].name for rid in path]
+            return jsonify({
+                "from": room_graph.rooms[start_id].name,
+                "to": room_graph.rooms[end_id].name,
+                "path": named_path,
+                "hops": len(named_path) - 1
+            }), 200
+        else:
+            return jsonify({
+                "message": f"No route found between '{start_id}' and '{end_id}'."
+            }), 404
+    except ValueError as e:
+        abort(400, description=str(e))
+
+# Route for getting a route between room A and room B given names
+@app.route('/rooms/route/bynames', methods=['GET'])
+def get_shortest_route_by_names():
+    start_name = request.args.get('from').lower()
+    end_name = request.args.get('to').lower()
+
+    if not start_name or not end_name:
+        abort(400, description="Query parameters 'from' and 'to' are required.")
+
+    start_room = room_graph.get_room_by_name(start_name)
+    end_room = room_graph.get_room_by_name(end_name)
+
+    if not start_room or not end_room:
+        abort(400, description="Could not find one or both rooms given parameters 'from' and 'to'")
+
+    start_id = start_room.room_id
+    end_id = end_room.room_id
 
     try:
         path = room_graph.find_shortest_path(start_id, end_id)
