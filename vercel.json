@@ -1,13 +1,7 @@
 {
   "functions": {
-    "room_api.py": {
-      "runtime": "@vercel/python"
+    "api/room_api.py": {
+      "runtime": "python3.9"
     }
-  },
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/room_api.py"
-    }
-  ]
+  }
 }

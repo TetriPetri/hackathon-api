@@ -217,3 +217,17 @@ def handle_error(error):
 # Run the application
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+# Vercel serverless function handler
+def handler(request):
+    with app.test_request_context(request.path, method=request.method, 
+                                  data=request.data, headers=request.headers):
+        try:
+            response = app.full_dispatch_request()
+            return response
+        except Exception as e:
+            return app.make_response(str(e))
+
+# Also need this for Vercel
+app.wsgi_app = handler
