@@ -1,14 +1,14 @@
 {
+  "builds": [
+    {
+      "src": "api/room_api.py",
+      "use": "@vercel/python"
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",
       "destination": "/api/room_api"
     }
-  ],
-  "functions": {
-    "api/room_api.py": {
-      "runtime": "python3.9",
-      "maxDuration": 10
-    }
-  }
+  ]
 }
